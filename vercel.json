@@ -9,13 +9,16 @@
         }
       }
     ],
-    "routes": [
-      {
-        "src": "/(.*)",
-        "dest": "/index.html"
-      }
-    ],
+  "routes": [
+    {
+      "handle": "filesystem"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/index.html"
+    }
+  ],
     "env": {
-      "VITE_API_URL": "https://your-backend-url.up.railway.app"
+      "VITE_API_URL": "https://scrum-poker-backend-production.up.railway.app/"
     }
   }
