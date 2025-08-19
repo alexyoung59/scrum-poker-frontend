@@ -37,6 +37,7 @@ const ScrumPokerApp = () => {
       apiClient.on('session_started', handleSessionStarted),
       apiClient.on('vote_updated', handleVoteUpdated),
       apiClient.on('votes_revealed', handleVotesRevealed),
+      apiClient.on('votes_reset', handleVotesReset),
       apiClient.on('room_updated', handleRoomUpdated)
     ];
 
@@ -74,6 +75,12 @@ const ScrumPokerApp = () => {
       return acc;
     }, {}));
     setVotingRevealed(true);
+  };
+
+  const handleVotesReset = () => {
+    setVotes({});
+    setVotingRevealed(false);
+    setSelectedCard(null);
   };
 
   const handleRoomUpdated = (data) => {
@@ -227,10 +234,15 @@ const joinRoom = async (roomId) => {
   };
 
   const resetVoting = () => {
+    if (!currentSession) return;
+    
+    // Emit reset event to all participants
+    apiClient.emitResetVotes(currentSession._id);
+    
+    // Reset local state
     setVotes({});
     setVotingRevealed(false);
     setSelectedCard(null);
-    setCurrentSession(null);
   };
 
   // Utility functions

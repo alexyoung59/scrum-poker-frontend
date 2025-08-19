@@ -255,6 +255,11 @@ class ApiClient {
       this.emit('votes_revealed', data);
     });
 
+    this.socket.on('votes_reset', (data) => {
+      console.log('Votes reset:', data);
+      this.emit('votes_reset', data);
+    });
+
     // Room state events (NEW)
     this.socket.on('room_updated', (data) => {
       console.log('Room updated:', data);
