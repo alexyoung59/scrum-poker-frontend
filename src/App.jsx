@@ -144,27 +144,27 @@ const ScrumPokerApp = () => {
     }
   };
 
-  const joinRoom = async (roomId) => {
-    setLoading(true);
-    try {
-      const room = await apiClient.getRoom(roomId);
-      setCurrentRoom(room);
-      setParticipants(room.participants || []);
-      setCurrentView('room');
-      
-      // Join socket room for real-time updates
-      apiClient.joinSocketRoom(roomId);
-      
-      setVotes({});
-      setVotingRevealed(false);
-      setSelectedCard(null);
-      setCurrentSession(null);
-    } catch (error) {
-      alert('Failed to join room: ' + error.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+const joinRoom = async (roomId) => {
+  setLoading(true);
+  try {
+    const room = await apiClient.getRoom(roomId);
+    setCurrentRoom(room);
+    setParticipants(room.participants || []);
+    setCurrentView('room');
+    
+    // Join socket room for real-time updates
+    apiClient.joinSocketRoom(roomId);
+    
+    setVotes({});
+    setVotingRevealed(false);
+    setSelectedCard(null);
+    setCurrentSession(null);
+  } catch (error) {
+    alert('Failed to join room: ' + error.message);
+  } finally {
+    setLoading(false);
+  }
+};
 
   const joinRoomByInvite = async (inviteCode) => {
     setLoading(true);

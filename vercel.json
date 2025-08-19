@@ -1,14 +1,14 @@
 {
-    "version": 2,
-    "builds": [
-      {
-        "src": "package.json",
-        "use": "@vercel/static-build",
-        "config": {
-          "distDir": "dist"
-        }
+  "version": 2,
+  "builds": [
+    {
+      "src": "package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "dist"
       }
-    ],
+    }
+  ],
   "routes": [
     {
       "handle": "filesystem"
@@ -18,7 +18,7 @@
       "dest": "/index.html"
     }
   ],
-    "env": {
-      "VITE_API_URL": "https://scrum-poker-backend-production.up.railway.app/"
-    }
+  "env": {
+    "VITE_API_URL": "https://scrum-poker-backend-production.up.railway.app"
   }
+}
