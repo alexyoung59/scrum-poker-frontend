@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Users, Settings, BarChart3, Clock, Link, Eye, UserCheck, LogOut, Plus, Share2, Vote, CheckCircle, Copy, ExternalLink } from 'lucide-react';
+import { Users, Settings, BarChart3, Clock, Link, Eye, UserCheck, LogOut, Plus, Share2, Vote, CheckCircle, Copy, ExternalLink, Mail, Lock } from 'lucide-react';
 import apiClient from './apiClient.js';
 
 const FIBONACCI_CARDS = [0, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, '?', '☕'];
@@ -278,15 +278,26 @@ const joinRoom = async (roomId) => {
   const allVotesSubmitted = votingParticipants.length > 0 && 
     votingParticipants.every(p => votes[p.userId._id || p.userId] !== undefined);
 
-  // Login Component with Registration
+  // Login Component with Registration - Enhanced
   const LoginView = () => {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [name, setName] = useState('');
     const [isRegistering, setIsRegistering] = useState(false);
+    const [emailFocused, setEmailFocused] = useState(false);
+    const [passwordFocused, setPasswordFocused] = useState(false);
+    const [nameFocused, setNameFocused] = useState(false);
+    const [errors, setErrors] = useState({});
+    const [mounted, setMounted] = useState(false);
+
+    useEffect(() => {
+      setMounted(true);
+    }, []);
 
     const handleSubmit = async (e) => {
       e.preventDefault();
+      setErrors({});
+
       if (isRegistering) {
         await handleRegister(email, password, name);
       } else {
@@ -295,69 +306,140 @@ const joinRoom = async (roomId) => {
     };
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-md">
+      <div className="min-h-screen bg-gradient-to-br from-indigo-100 via-purple-50 to-pink-100 flex items-center justify-center p-4 relative overflow-hidden">
+        {/* Animated background decorations */}
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          <div className="absolute top-20 left-20 w-72 h-72 bg-indigo-200 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob"></div>
+          <div className="absolute top-40 right-20 w-72 h-72 bg-purple-200 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob animation-delay-2000"></div>
+          <div className="absolute -bottom-8 left-40 w-72 h-72 bg-pink-200 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob animation-delay-4000"></div>
+        </div>
+
+        <div
+          className={`bg-white/90 backdrop-blur-sm rounded-2xl shadow-2xl p-8 w-full max-w-md relative z-10 transition-all duration-700 ${
+            mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
+          }`}
+          style={{ boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)' }}
+        >
           <div className="text-center mb-8">
-            <div className="inline-flex items-center justify-center w-16 h-16 bg-indigo-100 rounded-full mb-4">
-              <Vote className="w-8 h-8 text-indigo-600" />
+            <div className={`inline-flex items-center justify-center w-20 h-20 bg-gradient-to-br from-indigo-100 to-purple-100 rounded-full mb-4 transition-all duration-500 ${
+              mounted ? 'scale-100 rotate-0' : 'scale-0 rotate-45'
+            }`}>
+              <Vote className="w-10 h-10 text-indigo-600 animate-pulse" />
             </div>
-            <h1 className="text-3xl font-bold text-gray-900 mb-2">Plan With Poker</h1>
-            <p className="text-gray-600">Collaborative scrum planning made simple</p>
+            <h1 className={`text-3xl font-bold bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent mb-2 transition-all duration-500 delay-100 ${
+              mounted ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4'
+            }`}>
+              Plan With Poker
+            </h1>
+            <p className={`text-gray-600 transition-all duration-500 delay-200 ${
+              mounted ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4'
+            }`}>
+              Collaborative scrum planning made simple
+            </p>
           </div>
-          
-          <form onSubmit={handleSubmit} className="space-y-6">
+
+          <form onSubmit={handleSubmit} className="space-y-5">
             {isRegistering && (
-              <div>
+              <div className="transition-all duration-300">
                 <label className="block text-sm font-medium text-gray-700 mb-2">Full Name</label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <UserCheck className={`w-5 h-5 transition-colors duration-200 ${
+                      nameFocused ? 'text-indigo-500' : 'text-gray-400'
+                    }`} />
+                  </div>
+                  <input
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    onFocus={() => setNameFocused(true)}
+                    onBlur={() => setNameFocused(false)}
+                    className={`w-full pl-10 pr-4 py-3 border-2 rounded-lg transition-all duration-200 ${
+                      nameFocused
+                        ? 'border-indigo-500 ring-4 ring-indigo-100 bg-white'
+                        : 'border-gray-200 bg-gray-50 hover:bg-white'
+                    } focus:outline-none`}
+                    placeholder="Enter your full name"
+                    required
+                  />
+                </div>
+              </div>
+            )}
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <Mail className={`w-5 h-5 transition-colors duration-200 ${
+                    emailFocused ? 'text-indigo-500' : 'text-gray-400'
+                  }`} />
+                </div>
                 <input
-                  type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                  placeholder="Enter your full name"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  onFocus={() => setEmailFocused(true)}
+                  onBlur={() => setEmailFocused(false)}
+                  className={`w-full pl-10 pr-4 py-3 border-2 rounded-lg transition-all duration-200 ${
+                    emailFocused
+                      ? 'border-indigo-500 ring-4 ring-indigo-100 bg-white'
+                      : 'border-gray-200 bg-gray-50 hover:bg-white'
+                  } focus:outline-none`}
+                  placeholder="Enter your email"
                   required
                 />
               </div>
-            )}
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                placeholder="Enter your email"
-                required
-              />
             </div>
-            
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                placeholder="Enter your password"
-                minLength={6}
-                required
-              />
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <Lock className={`w-5 h-5 transition-colors duration-200 ${
+                    passwordFocused ? 'text-indigo-500' : 'text-gray-400'
+                  }`} />
+                </div>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  onFocus={() => setPasswordFocused(true)}
+                  onBlur={() => setPasswordFocused(false)}
+                  className={`w-full pl-10 pr-4 py-3 border-2 rounded-lg transition-all duration-200 ${
+                    passwordFocused
+                      ? 'border-indigo-500 ring-4 ring-indigo-100 bg-white'
+                      : 'border-gray-200 bg-gray-50 hover:bg-white'
+                  } focus:outline-none`}
+                  placeholder="Enter your password"
+                  minLength={6}
+                  required
+                />
+              </div>
             </div>
-            
+
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-indigo-600 text-white py-3 px-4 rounded-lg hover:bg-indigo-700 transition-colors font-medium disabled:opacity-50"
+              className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white py-3 px-4 rounded-lg font-medium disabled:opacity-50 transition-all duration-200 hover:shadow-lg hover:scale-[1.02] active:scale-[0.98] disabled:hover:scale-100 mt-6"
             >
-              {loading ? 'Please wait...' : (isRegistering ? 'Create Account' : 'Sign In')}
+              {loading ? (
+                <span className="flex items-center justify-center">
+                  <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Please wait...
+                </span>
+              ) : (
+                isRegistering ? 'Create Account' : 'Sign In'
+              )}
             </button>
           </form>
-          
+
           <div className="mt-6 text-center">
             <button
               onClick={() => setIsRegistering(!isRegistering)}
-              className="text-indigo-600 hover:text-indigo-700 text-sm"
+              className="text-indigo-600 hover:text-purple-600 text-sm font-medium transition-colors duration-200"
             >
               {isRegistering ? 'Already have an account? Sign in' : "Don't have an account? Sign up"}
             </button>
