@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Users, Settings, BarChart3, Clock, Link, Eye, UserCheck, LogOut, Plus, Share2, Vote, CheckCircle, Copy, ExternalLink, Mail, Lock } from 'lucide-react';
 import apiClient from './apiClient.js';
 
 const FIBONACCI_CARDS = [0, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, '?', '☕'];
 
 const ScrumPokerApp = () => {
-  const [currentView, setCurrentView] = useState('login');
+  const [currentView, setCurrentView] = useState('enterName');
   const [user, setUser] = useState(null);
   const [rooms, setRooms] = useState([]);
   const [currentRoom, setCurrentRoom] = useState(null);
@@ -17,13 +17,40 @@ const ScrumPokerApp = () => {
   const [isConnected, setIsConnected] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  // Use ref to avoid stale closure in socket event handlers
+  const currentRoomRef = useRef(null);
+
   // Initialize user and socket connection on app load
   useEffect(() => {
-    const currentUser = apiClient.getCurrentUser();
-    if (currentUser) {
-      setUser(currentUser);
-      setCurrentView('dashboard');
-      apiClient.initializeSocket();
+    const savedUser = localStorage.getItem('scrumPokerUser');
+    const savedRoom = localStorage.getItem('scrumPokerCurrentRoom');
+
+    console.log('[INIT] Restoring session:', {
+      hasSavedUser: !!savedUser,
+      hasSavedRoom: !!savedRoom
+    });
+
+    if (savedUser) {
+      try {
+        const userData = JSON.parse(savedUser);
+        console.log('[INIT] Restored user:', userData);
+        setUser(userData);
+        apiClient.initializeSocket(userData.name, userData.anonymousId);
+
+        if (savedRoom) {
+          // Attempt to rejoin room
+          joinRoom(savedRoom).catch(() => {
+            localStorage.removeItem('scrumPokerCurrentRoom');
+            setCurrentView('dashboard');
+          });
+        } else {
+          setCurrentView('dashboard');
+        }
+      } catch (error) {
+        console.error('Failed to restore session:', error);
+        localStorage.removeItem('scrumPokerUser');
+        localStorage.removeItem('scrumPokerCurrentRoom');
+      }
     }
   }, []);
 
@@ -54,7 +81,7 @@ const ScrumPokerApp = () => {
   };
 
   const handleUserDisconnected = (data) => {
-    setParticipants(prev => prev.filter(p => p.id !== data.user.id));
+    setParticipants(prev => prev.filter(p => p.anonymousId !== data.user.anonymousId));
   };
 
   const handleSessionStarted = (session) => {
@@ -66,12 +93,12 @@ const ScrumPokerApp = () => {
 
   const handleVoteUpdated = (data) => {
     // Update vote indicators without revealing actual votes
-    setVotes(prev => ({ ...prev, [data.userId]: '●' }));
+    setVotes(prev => ({ ...prev, [data.anonymousId]: '●' }));
   };
 
   const handleVotesRevealed = (data) => {
     setVotes(data.votes.reduce((acc, vote) => {
-      acc[vote.userId] = vote.vote;
+      acc[vote.anonymousId] = vote.vote;
       return acc;
     }, {}));
     setVotingRevealed(true);
@@ -84,46 +111,46 @@ const ScrumPokerApp = () => {
   };
 
   const handleRoomUpdated = (data) => {
-    if (data.roomId === currentRoom?._id) {
+    console.log('[HANDLE_ROOM_UPDATED] Received room_updated event');
+    console.log('[HANDLE_ROOM_UPDATED] data.roomId:', data.roomId);
+    console.log('[HANDLE_ROOM_UPDATED] currentRoomRef.current?._id:', currentRoomRef.current?._id);
+    console.log('[HANDLE_ROOM_UPDATED] Match?', data.roomId === currentRoomRef.current?._id);
+    console.log('[HANDLE_ROOM_UPDATED] Participants in update:', data.room?.participants?.length);
+
+    if (data.roomId === currentRoomRef.current?._id) {
+      console.log('[HANDLE_ROOM_UPDATED] ✅ Room ID matches, updating state');
       setCurrentRoom(data.room);
+      currentRoomRef.current = data.room; // Update ref as well
       setParticipants(data.room.participants);
+      console.log('[HANDLE_ROOM_UPDATED] State updated with participants:', data.room.participants);
+    } else {
+      console.log('[HANDLE_ROOM_UPDATED] ❌ Room ID mismatch, NOT updating state');
     }
   };
 
-  // Authentication
-  const handleLogin = async (email, password) => {
-    setLoading(true);
-    try {
-      const response = await apiClient.login({ email, password });
-      setUser(response.user);
-      setCurrentView('dashboard');
-      apiClient.initializeSocket();
-    } catch (error) {
-      alert('Login failed: ' + error.message);
-    } finally {
-      setLoading(false);
-    }
+  // User identification
+  const generateAnonymousId = () => {
+    return `anon_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
   };
 
-  const handleRegister = async (email, password, name) => {
-    setLoading(true);
-    try {
-      const response = await apiClient.register({ email, password, name });
-      setUser(response.user);
-      setCurrentView('dashboard');
-      apiClient.initializeSocket();
-    } catch (error) {
-      alert('Registration failed: ' + error.message);
-    } finally {
-      setLoading(false);
-    }
+  const handleEnterName = (name) => {
+    const anonymousId = generateAnonymousId();
+    const userData = { name, anonymousId };
+
+    setUser(userData);
+    localStorage.setItem('scrumPokerUser', JSON.stringify(userData));
+    setCurrentView('dashboard');
+    apiClient.initializeSocket(name, anonymousId);
   };
 
   const handleLogout = () => {
     apiClient.logout();
     setUser(null);
-    setCurrentView('login');
+    localStorage.removeItem('scrumPokerUser');
+    localStorage.removeItem('scrumPokerCurrentRoom');
+    setCurrentView('enterName');
     setCurrentRoom(null);
+    currentRoomRef.current = null; // Clear ref as well
     setCurrentSession(null);
     setVotes({});
     setParticipants([]);
@@ -142,9 +169,29 @@ const ScrumPokerApp = () => {
   const createRoom = async (roomName, description) => {
     setLoading(true);
     try {
-      await apiClient.createRoom({ name: roomName, description });
-      await loadRooms();
+      console.log('[CREATE_ROOM] Creating room:', roomName);
+      const room = await apiClient.createRoom({ name: roomName, description });
+      console.log('[CREATE_ROOM] Room created, API response:', room);
+      console.log('[CREATE_ROOM] Room _id:', room._id);
+      console.log('[CREATE_ROOM] Room participants:', room.participants);
+
+      // Automatically enter the created room
+      setCurrentRoom(room);
+      currentRoomRef.current = room; // Update ref for socket handlers
+      console.log('[CREATE_ROOM] setCurrentRoom called with:', room);
+      setParticipants(room.participants || []);
+      setCurrentView('room');
+      localStorage.setItem('scrumPokerCurrentRoom', room._id);
+      console.log('[CREATE_ROOM] Calling joinSocketRoom with room._id:', room._id);
+      apiClient.joinSocketRoom(room._id);
+
+      setVotes({});
+      setVotingRevealed(false);
+      setSelectedCard(null);
+      setCurrentSession(null);
+      console.log('[CREATE_ROOM] Room setup complete');
     } catch (error) {
+      console.error('[CREATE_ROOM] Error:', error);
       alert('Failed to create room: ' + error.message);
     } finally {
       setLoading(false);
@@ -154,20 +201,36 @@ const ScrumPokerApp = () => {
 const joinRoom = async (roomId) => {
   setLoading(true);
   try {
-    const room = await apiClient.getRoom(roomId);
+    // Actually join the room (registers as participant in backend)
+    const joinResponse = await apiClient.joinRoom(roomId);
+    const room = joinResponse.room;
+
+    console.log('[JOIN_ROOM] Room data received:', {
+      roomId: room._id,
+      hostName: room.hostName,
+      hostAnonymousId: room.hostAnonymousId,
+      participantCount: room.participants?.length
+    });
+    console.log('[JOIN_ROOM] Current user:', user);
+
     setCurrentRoom(room);
+    currentRoomRef.current = room; // Update ref for socket handlers
     setParticipants(room.participants || []);
     setCurrentView('room');
-    
+
+    // Save current room to localStorage
+    localStorage.setItem('scrumPokerCurrentRoom', roomId);
+
     // Join socket room for real-time updates
     apiClient.joinSocketRoom(roomId);
-    
+
     setVotes({});
     setVotingRevealed(false);
     setSelectedCard(null);
     setCurrentSession(null);
   } catch (error) {
     alert('Failed to join room: ' + error.message);
+    localStorage.removeItem('scrumPokerCurrentRoom');
   } finally {
     setLoading(false);
   }
@@ -247,17 +310,23 @@ const joinRoom = async (roomId) => {
 
   // Utility functions
   const isHost = () => {
-    return currentRoom?.hostId._id === user?.id || currentRoom?.hostId === user?.id;
+    const result = currentRoom?.hostAnonymousId === user?.anonymousId;
+    console.log('[IS_HOST] Check:', {
+      hostAnonymousId: currentRoom?.hostAnonymousId,
+      userAnonymousId: user?.anonymousId,
+      isHost: result
+    });
+    return result;
   };
 
-  const getParticipantRole = (participantId) => {
-    const participant = participants.find(p => p.userId._id === participantId || p.userId === participantId);
+  const getParticipantRole = (anonymousId) => {
+    const participant = participants.find(p => p.anonymousId === anonymousId);
     return participant?.role || 'participant';
   };
 
   const copyInviteLink = async () => {
     if (!currentRoom?.inviteCode) return;
-    
+
     try {
       const link = await apiClient.copyInviteLink(currentRoom._id, currentRoom.inviteCode);
       alert('Invite link copied to clipboard!');
@@ -274,40 +343,30 @@ const joinRoom = async (roomId) => {
   }, [currentView, user]);
 
   // Check if all participants have voted
-  const votingParticipants = participants.filter(p => getParticipantRole(p.userId._id || p.userId) === 'participant');
-  const allVotesSubmitted = votingParticipants.length > 0 && 
-    votingParticipants.every(p => votes[p.userId._id || p.userId] !== undefined);
+  const votingParticipants = participants.filter(p => getParticipantRole(p.anonymousId) === 'participant');
+  const allVotesSubmitted = votingParticipants.length > 0 &&
+    votingParticipants.every(p => votes[p.anonymousId] !== undefined);
 
   // Login Component with Registration - Enhanced
-  const LoginView = () => {
-    const [email, setEmail] = useState('');
-    const [password, setPassword] = useState('');
+  const EnterNameView = () => {
     const [name, setName] = useState('');
-    const [isRegistering, setIsRegistering] = useState(false);
-    const [emailFocused, setEmailFocused] = useState(false);
-    const [passwordFocused, setPasswordFocused] = useState(false);
     const [nameFocused, setNameFocused] = useState(false);
-    const [errors, setErrors] = useState({});
     const [mounted, setMounted] = useState(false);
 
     useEffect(() => {
       setMounted(true);
     }, []);
 
-    const handleSubmit = async (e) => {
+    const handleSubmit = (e) => {
       e.preventDefault();
-      setErrors({});
-
-      if (isRegistering) {
-        await handleRegister(email, password, name);
-      } else {
-        await handleLogin(email, password);
+      if (name.trim().length >= 2) {
+        handleEnterName(name.trim());
       }
     };
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-indigo-100 via-purple-50 to-pink-100 flex items-center justify-center p-4 relative overflow-hidden">
-        {/* Animated background decorations */}
+        {/* Animated background blobs */}
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
           <div className="absolute top-20 left-20 w-72 h-72 bg-indigo-200 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob"></div>
           <div className="absolute top-40 right-20 w-72 h-72 bg-purple-200 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob animation-delay-2000"></div>
@@ -339,110 +398,51 @@ const joinRoom = async (roomId) => {
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-5">
-            {isRegistering && (
-              <div className="transition-all duration-300">
-                <label className="block text-sm font-medium text-gray-700 mb-2">Full Name</label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <UserCheck className={`w-5 h-5 transition-colors duration-200 ${
-                      nameFocused ? 'text-indigo-500' : 'text-gray-400'
-                    }`} />
-                  </div>
-                  <input
-                    type="text"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    onFocus={() => setNameFocused(true)}
-                    onBlur={() => setNameFocused(false)}
-                    className={`w-full pl-10 pr-4 py-3 border-2 rounded-lg transition-all duration-200 ${
-                      nameFocused
-                        ? 'border-indigo-500 ring-4 ring-indigo-100 bg-white'
-                        : 'border-gray-200 bg-gray-50 hover:bg-white'
-                    } focus:outline-none`}
-                    placeholder="Enter your full name"
-                    required
-                  />
-                </div>
-              </div>
-            )}
-
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                What's your name?
+              </label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Mail className={`w-5 h-5 transition-colors duration-200 ${
-                    emailFocused ? 'text-indigo-500' : 'text-gray-400'
+                  <UserCheck className={`w-5 h-5 transition-colors duration-200 ${
+                    nameFocused ? 'text-indigo-500' : 'text-gray-400'
                   }`} />
                 </div>
                 <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  onFocus={() => setEmailFocused(true)}
-                  onBlur={() => setEmailFocused(false)}
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  onFocus={() => setNameFocused(true)}
+                  onBlur={() => setNameFocused(false)}
                   className={`w-full pl-10 pr-4 py-3 border-2 rounded-lg transition-all duration-200 ${
-                    emailFocused
+                    nameFocused
                       ? 'border-indigo-500 ring-4 ring-indigo-100 bg-white'
                       : 'border-gray-200 bg-gray-50 hover:bg-white'
                   } focus:outline-none`}
-                  placeholder="Enter your email"
+                  placeholder="Enter your name"
+                  minLength={2}
+                  maxLength={50}
                   required
                 />
               </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Lock className={`w-5 h-5 transition-colors duration-200 ${
-                    passwordFocused ? 'text-indigo-500' : 'text-gray-400'
-                  }`} />
-                </div>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  onFocus={() => setPasswordFocused(true)}
-                  onBlur={() => setPasswordFocused(false)}
-                  className={`w-full pl-10 pr-4 py-3 border-2 rounded-lg transition-all duration-200 ${
-                    passwordFocused
-                      ? 'border-indigo-500 ring-4 ring-indigo-100 bg-white'
-                      : 'border-gray-200 bg-gray-50 hover:bg-white'
-                  } focus:outline-none`}
-                  placeholder="Enter your password"
-                  minLength={6}
-                  required
-                />
-              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                No registration required - just enter your name to get started
+              </p>
             </div>
 
             <button
               type="submit"
-              disabled={loading}
+              disabled={name.trim().length < 2}
               className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white py-3 px-4 rounded-lg font-medium disabled:opacity-50 transition-all duration-200 hover:shadow-lg hover:scale-[1.02] active:scale-[0.98] disabled:hover:scale-100 mt-6"
             >
-              {loading ? (
-                <span className="flex items-center justify-center">
-                  <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-                  Please wait...
-                </span>
-              ) : (
-                isRegistering ? 'Create Account' : 'Sign In'
-              )}
+              Get Started
             </button>
           </form>
 
           <div className="mt-6 text-center">
-            <button
-              onClick={() => setIsRegistering(!isRegistering)}
-              className="text-indigo-600 hover:text-purple-600 text-sm font-medium transition-colors duration-200"
-            >
-              {isRegistering ? 'Already have an account? Sign in' : "Don't have an account? Sign up"}
-            </button>
+            <p className="text-xs text-gray-500">
+              Free forever • No account needed • Privacy focused
+            </p>
           </div>
         </div>
       </div>
@@ -794,14 +794,14 @@ const joinRoom = async (roomId) => {
                         <button
                           key={card}
                           onClick={() => submitVote(card)}
-                          disabled={getParticipantRole(user.id) === 'observer' || votingRevealed}
+                          disabled={getParticipantRole(user.anonymousId) === 'observer' || votingRevealed}
                           className={`aspect-[3/4] rounded-lg border-2 font-bold text-lg transition-all ${
                             selectedCard === card
                               ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
                               : 'border-gray-300 hover:border-gray-400 bg-white'
                           } ${
-                            getParticipantRole(user.id) === 'observer' || votingRevealed
-                              ? 'opacity-50 cursor-not-allowed' 
+                            getParticipantRole(user.anonymousId) === 'observer' || votingRevealed
+                              ? 'opacity-50 cursor-not-allowed'
                               : 'hover:shadow-md'
                           }`}
                         >
@@ -819,16 +819,18 @@ const joinRoom = async (roomId) => {
                       {(() => {
                         const voteDistribution = {};
                         const numericVotes = [];
-                        
+
                         Object.values(votes).forEach(vote => {
                           voteDistribution[vote] = (voteDistribution[vote] || 0) + 1;
-                          
-                          if (typeof vote === 'number' && !isNaN(vote)) {
-                            numericVotes.push(vote);
+
+                          // Parse vote as number (votes come as strings from backend)
+                          const numericVote = parseFloat(vote);
+                          if (!isNaN(numericVote)) {
+                            numericVotes.push(numericVote);
                           }
                         });
-                        
-                        const average = numericVotes.length > 0 
+
+                        const average = numericVotes.length > 0
                           ? (numericVotes.reduce((sum, vote) => sum + vote, 0) / numericVotes.length).toFixed(1)
                           : 'N/A';
                         
@@ -886,10 +888,10 @@ const joinRoom = async (roomId) => {
               <h3 className="text-lg font-semibold mb-4">Participants</h3>
               <div className="space-y-3">
                 {participants.map((participant) => {
-                  const participantId = participant.userId._id || participant.userId;
-                  const participantName = participant.userId.name || participant.name || 'Unknown';
+                  const participantId = participant.anonymousId;
+                  const participantName = participant.name || 'Unknown';
                   const participantRole = participant.role || 'participant';
-                  
+
                   return (
                     <div key={participantId} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                       <div className="flex items-center">
@@ -899,7 +901,7 @@ const joinRoom = async (roomId) => {
                         <div>
                           <p className="font-medium text-gray-900">
                             {participantName}
-                            {participantId === user?.id && ' (You)'}
+                            {participantId === user?.anonymousId && ' (You)'}
                           </p>
                           <p className="text-sm text-gray-500 capitalize">
                             {participantRole === 'participant' ? (
@@ -1131,7 +1133,7 @@ const joinRoom = async (roomId) => {
   // Main App Render
   return (
     <div className="font-sans">
-      {currentView === 'login' && <LoginView />}
+      {currentView === 'enterName' && <EnterNameView />}
       {currentView === 'dashboard' && <DashboardView />}
       {currentView === 'room' && <RoomView />}
       {currentView === 'analytics' && <AnalyticsView />}

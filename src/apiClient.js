@@ -5,38 +5,58 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://scrum-poker-backen
 
 class ApiClient {
   constructor() {
-    this.token = localStorage.getItem('token');
+    this.userName = null;
+    this.anonymousId = null;
     this.socket = null;
     this.eventHandlers = {};
     this.currentRoom = null;
+
+    // Load from localStorage
+    const savedUser = localStorage.getItem('scrumPokerUser');
+    if (savedUser) {
+      try {
+        const userData = JSON.parse(savedUser);
+        this.userName = userData.name;
+        this.anonymousId = userData.anonymousId;
+      } catch (error) {
+        console.error('Failed to load saved user:', error);
+      }
+    }
   }
 
-  // Set authentication token
-  setToken(token) {
-    this.token = token;
-    localStorage.setItem('token', token);
+  // Set user credentials
+  setUser(name, anonymousId) {
+    this.userName = name;
+    this.anonymousId = anonymousId;
+    localStorage.setItem('scrumPokerUser', JSON.stringify({ name, anonymousId }));
   }
 
-  // Remove authentication token
-  removeToken() {
-    this.token = null;
-    localStorage.removeItem('token');
+  // Clear user credentials
+  clearUser() {
+    this.userName = null;
+    this.anonymousId = null;
+    localStorage.removeItem('scrumPokerUser');
+    localStorage.removeItem('scrumPokerCurrentRoom');
     if (this.socket) {
       this.socket.disconnect();
       this.socket = null;
     }
   }
 
-  // Get headers with authentication
+  // Get headers with user identification
   getHeaders() {
     const headers = {
       'Content-Type': 'application/json',
     };
-    
-    if (this.token) {
-      headers['Authorization'] = `Bearer ${this.token}`;
+
+    if (this.anonymousId) {
+      headers['X-Anonymous-Id'] = this.anonymousId;
     }
-    
+
+    if (this.userName) {
+      headers['X-User-Name'] = this.userName;
+    }
+
     return headers;
   }
 
@@ -78,35 +98,8 @@ class ApiClient {
     }
   }
 
-  // Authentication methods
-  async register(userData) {
-    const response = await this.request('/api/auth/register', {
-      method: 'POST',
-      body: userData,
-    });
-    
-    if (response.token) {
-      this.setToken(response.token);
-    }
-    
-    return response;
-  }
-
-  async login(credentials) {
-    const response = await this.request('/api/auth/login', {
-      method: 'POST',
-      body: credentials,
-    });
-    
-    if (response.token) {
-      this.setToken(response.token);
-    }
-    
-    return response;
-  }
-
   logout() {
-    this.removeToken();
+    this.clearUser();
     this.disconnect();
   }
 
@@ -118,7 +111,10 @@ class ApiClient {
   async createRoom(roomData) {
     return this.request('/api/rooms', {
       method: 'POST',
-      body: roomData,
+      body: {
+        ...roomData,
+        hostName: this.userName
+      },
     });
   }
 
@@ -129,14 +125,21 @@ class ApiClient {
   async joinRoom(roomId, role = 'participant') {
     return this.request(`/api/rooms/${roomId}/join`, {
       method: 'POST',
-      body: { role },
+      body: {
+        role,
+        name: this.userName
+      },
     });
   }
 
   async joinRoomByCode(inviteCode, role = 'participant') {
     return this.request('/api/rooms/join-by-code', {
       method: 'POST',
-      body: { inviteCode, role },
+      body: {
+        inviteCode,
+        role,
+        name: this.userName
+      },
     });
   }
 
@@ -151,7 +154,10 @@ class ApiClient {
   async castVote(sessionId, vote) {
     return this.request(`/api/sessions/${sessionId}/vote`, {
       method: 'POST',
-      body: { vote },
+      body: {
+        vote,
+        name: this.userName
+      },
     });
   }
 
@@ -190,9 +196,15 @@ class ApiClient {
   }
 
   // Socket.io methods (ENHANCED)
-  initializeSocket() {
-    if (!this.token) {
-      console.warn('No authentication token for socket connection');
+  initializeSocket(userName, anonymousId) {
+    // Update stored credentials if provided
+    if (userName && anonymousId) {
+      this.userName = userName;
+      this.anonymousId = anonymousId;
+    }
+
+    if (!this.userName || !this.anonymousId) {
+      console.warn('No user credentials for socket connection');
       return null;
     }
 
@@ -202,7 +214,8 @@ class ApiClient {
 
     this.socket = io(API_BASE_URL, {
       auth: {
-        token: this.token
+        userName: this.userName,
+        anonymousId: this.anonymousId
       },
       transports: ['websocket', 'polling']
     });
@@ -271,9 +284,28 @@ class ApiClient {
 
   // Room management via socket
   joinSocketRoom(roomId) {
-    if (this.socket) {
+    console.log('[FRONTEND] joinSocketRoom called for room:', roomId);
+    console.log('[FRONTEND] Socket exists:', !!this.socket);
+    console.log('[FRONTEND] Socket connected:', this.socket?.connected);
+
+    if (this.socket?.connected) {
+      // Socket is connected, join immediately
+      console.log('[FRONTEND] Socket connected, emitting join_room immediately');
       this.socket.emit('join_room', roomId);
       this.currentRoom = roomId;
+      console.log('[FRONTEND] join_room event emitted');
+    } else if (this.socket) {
+      // Socket exists but not connected yet, join when it connects
+      console.log('[FRONTEND] Socket not connected yet, waiting for connection...');
+      this.currentRoom = roomId;
+      const handleConnect = () => {
+        console.log('[FRONTEND] Socket connected, now emitting join_room');
+        this.socket.emit('join_room', roomId);
+        this.socket.off('connect', handleConnect);
+      };
+      this.socket.on('connect', handleConnect);
+    } else {
+      console.error('[FRONTEND] ERROR: No socket exists! Cannot join room.');
     }
   }
 
@@ -332,22 +364,16 @@ class ApiClient {
 
   // Utility methods (NEW)
   getCurrentUser() {
-    try {
-      if (!this.token) return null;
-      const payload = JSON.parse(atob(this.token.split('.')[1]));
-      return {
-        id: payload.id,
-        name: payload.name,
-        email: payload.email
-      };
-    } catch (error) {
-      console.error('Failed to decode token:', error);
-      return null;
-    }
+    if (!this.userName || !this.anonymousId) return null;
+
+    return {
+      name: this.userName,
+      anonymousId: this.anonymousId
+    };
   }
 
   isAuthenticated() {
-    return !!this.token;
+    return !!(this.userName && this.anonymousId);
   }
 
   // Cleanup
