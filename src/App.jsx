@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Users, Settings, BarChart3, Clock, Link, Eye, UserCheck, LogOut, Plus, Share2, Vote, CheckCircle, Copy, ExternalLink, Mail, Lock } from 'lucide-react';
+import { Users, Settings, BarChart3, Clock, Link, Eye, UserCheck, LogOut, Plus, Share2, Vote, CheckCircle, Copy, ExternalLink, Mail, Lock, XCircle } from 'lucide-react';
 import apiClient from './apiClient.js';
 
 const FIBONACCI_CARDS = [0, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, '?', '☕'];
@@ -65,7 +65,9 @@ const ScrumPokerApp = () => {
       apiClient.on('vote_updated', handleVoteUpdated),
       apiClient.on('votes_revealed', handleVotesRevealed),
       apiClient.on('votes_reset', handleVotesReset),
-      apiClient.on('room_updated', handleRoomUpdated)
+      apiClient.on('room_updated', handleRoomUpdated),
+      apiClient.on('session_ended', handleSessionEnded),
+      apiClient.on('room_closed', handleRoomClosed)
     ];
 
     return () => {
@@ -136,6 +138,30 @@ const ScrumPokerApp = () => {
       console.log('[HANDLE_ROOM_UPDATED] dataRoomId (string):', dataRoomId);
       console.log('[HANDLE_ROOM_UPDATED] currentRoomId (string):', currentRoomId);
     }
+  };
+
+  const handleSessionEnded = (data) => {
+    console.log('[HANDLE_SESSION_ENDED] Session ended:', data);
+    setCurrentSession(null);
+    setVotes({});
+    setVotingRevealed(false);
+    setSelectedCard(null);
+  };
+
+  const handleRoomClosed = (data) => {
+    console.log('[HANDLE_ROOM_CLOSED] Room closed:', data);
+    alert(data.message || 'This room has been closed by the host');
+    // Clean up and return to dashboard
+    apiClient.leaveSocketRoom(currentRoom?._id);
+    localStorage.removeItem('scrumPokerCurrentRoom');
+    setCurrentRoom(null);
+    currentRoomRef.current = null;
+    setCurrentSession(null);
+    setVotes({});
+    setVotingRevealed(false);
+    setSelectedCard(null);
+    setParticipants([]);
+    setCurrentView('dashboard');
   };
 
   // User identification
@@ -302,13 +328,43 @@ const joinRoom = async (roomId) => {
 
   const revealVotes = async () => {
     if (!currentSession) return;
-    
+
     setLoading(true);
     try {
       await apiClient.revealVotes(currentSession._id);
       apiClient.emitRevealVotes(currentSession._id);
     } catch (error) {
       alert('Failed to reveal votes: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const endSession = async () => {
+    if (!currentSession) return;
+    if (!confirm('Are you sure you want to end this voting session?')) return;
+
+    setLoading(true);
+    try {
+      await apiClient.endSession(currentSession._id);
+      // The session_ended event will be broadcast to all participants
+    } catch (error) {
+      alert('Failed to end session: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const closeRoom = async () => {
+    if (!currentRoom) return;
+    if (!confirm('Are you sure you want to close this room? All participants will be removed and the room will be deactivated.')) return;
+
+    setLoading(true);
+    try {
+      await apiClient.closeRoom(currentRoom._id);
+      // The room_closed event will be broadcast to all participants
+    } catch (error) {
+      alert('Failed to close room: ' + error.message);
     } finally {
       setLoading(false);
     }
@@ -554,7 +610,7 @@ const joinRoom = async (roomId) => {
                 <div className="flex items-start justify-between mb-4">
                   <div>
                     <h3 className="font-semibold text-gray-900 mb-1">{room.name}</h3>
-                    <p className="text-sm text-gray-600">Host: {room.hostId?.name || 'Unknown'}</p>
+                    <p className="text-sm text-gray-600">Host: {room.hostName || 'Unknown'}</p>
                     {room.inviteCode && (
                       <p className="text-xs text-gray-500 mt-1">Code: {room.inviteCode}</p>
                     )}
@@ -720,7 +776,7 @@ const joinRoom = async (roomId) => {
                 <h1 className="text-xl font-semibold text-gray-900">{currentRoom?.name}</h1>
                 {isConnected && <div className="ml-3 w-2 h-2 bg-green-500 rounded-full" title="Connected"></div>}
               </div>
-              
+
               <div className="flex items-center space-x-4">
                 <div className="flex items-center text-gray-600">
                   <Users className="w-5 h-5 mr-1" />
@@ -734,6 +790,17 @@ const joinRoom = async (roomId) => {
                   >
                     <Copy className="w-5 h-5 mr-1" />
                     {currentRoom.inviteCode}
+                  </button>
+                )}
+                {isHost() && (
+                  <button
+                    onClick={closeRoom}
+                    disabled={loading}
+                    className="flex items-center px-3 py-2 text-red-600 hover:text-red-700 disabled:opacity-50"
+                    title="Close room"
+                  >
+                    <XCircle className="w-5 h-5 mr-1" />
+                    Close Room
                   </button>
                 )}
                 <button className="text-gray-500 hover:text-gray-700">
@@ -811,6 +878,13 @@ const joinRoom = async (roomId) => {
                             className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50"
                           >
                             Reset
+                          </button>
+                          <button
+                            onClick={endSession}
+                            disabled={loading}
+                            className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 disabled:opacity-50"
+                          >
+                            End Session
                           </button>
                         </div>
                       )}

@@ -167,6 +167,18 @@ class ApiClient {
     });
   }
 
+  async endSession(sessionId) {
+    return this.request(`/api/sessions/${sessionId}/end`, {
+      method: 'POST',
+    });
+  }
+
+  async closeRoom(roomId) {
+    return this.request(`/api/rooms/${roomId}/close`, {
+      method: 'POST',
+    });
+  }
+
   // Analytics methods
   async getUserAnalytics(timeframe = '30d') {
     return this.request(`/api/analytics/user?timeframe=${timeframe}`);
@@ -277,6 +289,16 @@ class ApiClient {
     this.socket.on('room_updated', (data) => {
       console.log('Room updated:', data);
       this.emit('room_updated', data);
+    });
+
+    this.socket.on('session_ended', (data) => {
+      console.log('Session ended:', data);
+      this.emit('session_ended', data);
+    });
+
+    this.socket.on('room_closed', (data) => {
+      console.log('Room closed:', data);
+      this.emit('room_closed', data);
     });
 
     return this.socket;
