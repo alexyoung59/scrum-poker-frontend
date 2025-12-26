@@ -122,21 +122,23 @@ class ApiClient {
     return this.request(`/api/rooms/${roomId}`);
   }
 
-  async joinRoom(roomId, role = 'participant') {
+  async joinRoom(roomId, password, role = 'participant') {
     return this.request(`/api/rooms/${roomId}/join`, {
       method: 'POST',
       body: {
+        password,
         role,
         name: this.userName
       },
     });
   }
 
-  async joinRoomByCode(inviteCode, role = 'participant') {
+  async joinRoomByCode(inviteCode, password, role = 'participant') {
     return this.request('/api/rooms/join-by-code', {
       method: 'POST',
       body: {
         inviteCode,
+        password,
         role,
         name: this.userName
       },
@@ -185,13 +187,18 @@ class ApiClient {
   }
 
   // Invitation methods (NEW)
-  generateInviteLink(roomId, inviteCode) {
+  generateInviteLink(roomId, inviteCode, password = null) {
     const baseUrl = window.location.origin;
+    // If password provided, encode it in the URL hash (not sent to server)
+    if (password) {
+      const encodedPassword = btoa(password); // Base64 encode
+      return `${baseUrl}/invite/${inviteCode}#${encodedPassword}`;
+    }
     return `${baseUrl}/invite/${inviteCode}`;
   }
 
-  async copyInviteLink(roomId, inviteCode) {
-    const link = this.generateInviteLink(roomId, inviteCode);
+  async copyInviteLink(roomId, inviteCode, password = null) {
+    const link = this.generateInviteLink(roomId, inviteCode, password);
     if (navigator.clipboard) {
       await navigator.clipboard.writeText(link);
       return link;

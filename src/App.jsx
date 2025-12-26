@@ -202,14 +202,20 @@ const ScrumPokerApp = () => {
     }
   };
 
-  const createRoom = async (roomName, description) => {
+  const createRoom = async (roomName, description, password) => {
     setLoading(true);
     try {
       console.log('[CREATE_ROOM] Creating room:', roomName);
-      const room = await apiClient.createRoom({ name: roomName, description });
+      const room = await apiClient.createRoom({ name: roomName, description, password });
       console.log('[CREATE_ROOM] Room created, API response:', room);
       console.log('[CREATE_ROOM] Room _id:', room._id);
-      console.log('[CREATE_ROOM] Room participants:', room.participants);
+      console.log('[CREATE_ROOM] Room plainPassword:', room.plainPassword);
+
+      // Store the plain password for sharing (it's sent back from backend)
+      if (room.plainPassword) {
+        // Store password in sessionStorage so host can share it
+        sessionStorage.setItem(`room_password_${room._id}`, room.plainPassword);
+      }
 
       // Automatically enter the created room
       setCurrentRoom(room);
@@ -402,8 +408,15 @@ const joinRoom = async (roomId) => {
     if (!currentRoom?.inviteCode) return;
 
     try {
-      const link = await apiClient.copyInviteLink(currentRoom._id, currentRoom.inviteCode);
-      alert('Invite link copied to clipboard!');
+      // Get password from sessionStorage (stored when room was created)
+      const password = sessionStorage.getItem(`room_password_${currentRoom._id}`);
+      const link = await apiClient.copyInviteLink(currentRoom._id, currentRoom.inviteCode, password);
+
+      if (password) {
+        alert(`Invite link (with password) copied to clipboard!\n\nAnyone with this link can join directly.`);
+      } else {
+        alert('Invite link copied! Note: Participants will need the room password to join.');
+      }
     } catch (error) {
       alert('Failed to copy invite link');
     }
@@ -528,15 +541,17 @@ const joinRoom = async (roomId) => {
     const [showCreateRoom, setShowCreateRoom] = useState(false);
     const [roomName, setRoomName] = useState('');
     const [roomDescription, setRoomDescription] = useState('');
+    const [roomPassword, setRoomPassword] = useState('');
     const [inviteCode, setInviteCode] = useState('');
     const [showJoinByCode, setShowJoinByCode] = useState(false);
 
     const handleCreateRoom = async () => {
-      if (!roomName.trim()) return;
-      await createRoom(roomName, roomDescription);
+      if (!roomName.trim() || !roomPassword.trim() || roomPassword.length < 4) return;
+      await createRoom(roomName, roomDescription, roomPassword);
       setShowCreateRoom(false);
       setRoomName('');
       setRoomDescription('');
+      setRoomPassword('');
     };
 
     const handleJoinByCode = async () => {
@@ -674,11 +689,28 @@ const joinRoom = async (roomId) => {
                       placeholder="Planning session for upcoming sprint..."
                     />
                   </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Room Password <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={roomPassword}
+                      onChange={(e) => setRoomPassword(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                      placeholder="Enter a password (min 4 characters)"
+                      minLength={4}
+                      required
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Share this password with people you want to join your room
+                    </p>
+                  </div>
                 </div>
                 <div className="flex space-x-3 mt-6">
                   <button
                     onClick={handleCreateRoom}
-                    disabled={loading || !roomName.trim()}
+                    disabled={loading || !roomName.trim() || !roomPassword.trim() || roomPassword.length < 4}
                     className="flex-1 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-50"
                   >
                     {loading ? 'Creating...' : 'Create Room'}
