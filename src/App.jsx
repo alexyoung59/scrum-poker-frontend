@@ -85,10 +85,12 @@ const ScrumPokerApp = () => {
   };
 
   const handleSessionStarted = (session) => {
+    console.log('[HANDLE_SESSION_STARTED] Received session_started event:', session);
     setCurrentSession(session);
     setVotes({});
     setVotingRevealed(false);
     setSelectedCard(null);
+    console.log('[HANDLE_SESSION_STARTED] Session state updated');
   };
 
   const handleVoteUpdated = (data) => {
@@ -114,10 +116,16 @@ const ScrumPokerApp = () => {
     console.log('[HANDLE_ROOM_UPDATED] Received room_updated event');
     console.log('[HANDLE_ROOM_UPDATED] data.roomId:', data.roomId);
     console.log('[HANDLE_ROOM_UPDATED] currentRoomRef.current?._id:', currentRoomRef.current?._id);
-    console.log('[HANDLE_ROOM_UPDATED] Match?', data.roomId === currentRoomRef.current?._id);
+
+    // Convert both to strings for comparison (handles ObjectId vs string)
+    const dataRoomId = String(data.roomId);
+    const currentRoomId = String(currentRoomRef.current?._id);
+    const match = dataRoomId === currentRoomId;
+
+    console.log('[HANDLE_ROOM_UPDATED] Match?', match);
     console.log('[HANDLE_ROOM_UPDATED] Participants in update:', data.room?.participants?.length);
 
-    if (data.roomId === currentRoomRef.current?._id) {
+    if (match) {
       console.log('[HANDLE_ROOM_UPDATED] ✅ Room ID matches, updating state');
       setCurrentRoom(data.room);
       currentRoomRef.current = data.room; // Update ref as well
@@ -125,6 +133,8 @@ const ScrumPokerApp = () => {
       console.log('[HANDLE_ROOM_UPDATED] State updated with participants:', data.room.participants);
     } else {
       console.log('[HANDLE_ROOM_UPDATED] ❌ Room ID mismatch, NOT updating state');
+      console.log('[HANDLE_ROOM_UPDATED] dataRoomId (string):', dataRoomId);
+      console.log('[HANDLE_ROOM_UPDATED] currentRoomId (string):', currentRoomId);
     }
   };
 
@@ -221,13 +231,15 @@ const joinRoom = async (roomId) => {
     // Save current room to localStorage
     localStorage.setItem('scrumPokerCurrentRoom', roomId);
 
-    // Join socket room for real-time updates
-    apiClient.joinSocketRoom(roomId);
-
+    // Clear session state initially - backend will send active session if one exists
+    setCurrentSession(null);
     setVotes({});
     setVotingRevealed(false);
     setSelectedCard(null);
-    setCurrentSession(null);
+
+    // Join socket room for real-time updates
+    // Backend will send 'session_started' event if there's an active session
+    apiClient.joinSocketRoom(roomId);
   } catch (error) {
     alert('Failed to join room: ' + error.message);
     localStorage.removeItem('scrumPokerCurrentRoom');
@@ -689,7 +701,16 @@ const joinRoom = async (roomId) => {
               <div className="flex items-center">
                 <button
                   onClick={() => {
+                    // Clean up all room and session state
                     apiClient.leaveSocketRoom(currentRoom._id);
+                    localStorage.removeItem('scrumPokerCurrentRoom');
+                    setCurrentRoom(null);
+                    currentRoomRef.current = null;
+                    setCurrentSession(null);
+                    setVotes({});
+                    setVotingRevealed(false);
+                    setSelectedCard(null);
+                    setParticipants([]);
                     setCurrentView('dashboard');
                   }}
                   className="text-indigo-600 hover:text-indigo-700 mr-4"
