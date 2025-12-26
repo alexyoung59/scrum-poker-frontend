@@ -272,7 +272,13 @@ const joinRoom = async (roomId) => {
 
   const submitVote = async (card) => {
     if (!currentSession || !user) return;
-    
+
+    // Prevent voting when socket is disconnected
+    if (!isConnected) {
+      alert('Cannot vote: Disconnected from server. Please wait for reconnection.');
+      return;
+    }
+
     try {
       await apiClient.castVote(currentSession._id, card);
       setSelectedCard(card);
@@ -794,13 +800,13 @@ const joinRoom = async (roomId) => {
                         <button
                           key={card}
                           onClick={() => submitVote(card)}
-                          disabled={getParticipantRole(user.anonymousId) === 'observer' || votingRevealed}
+                          disabled={getParticipantRole(user.anonymousId) === 'observer' || votingRevealed || !isConnected}
                           className={`aspect-[3/4] rounded-lg border-2 font-bold text-lg transition-all ${
                             selectedCard === card
                               ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
                               : 'border-gray-300 hover:border-gray-400 bg-white'
                           } ${
-                            getParticipantRole(user.anonymousId) === 'observer' || votingRevealed
+                            getParticipantRole(user.anonymousId) === 'observer' || votingRevealed || !isConnected
                               ? 'opacity-50 cursor-not-allowed'
                               : 'hover:shadow-md'
                           }`}
