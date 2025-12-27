@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Users, Settings, BarChart3, Clock, Link, Eye, UserCheck, LogOut, Plus, Share2, Vote, CheckCircle, Copy, ExternalLink, Mail, Lock, XCircle } from 'lucide-react';
+import { Users, Settings, BarChart3, Clock, Link, Eye, UserCheck, LogOut, Plus, Share2, Vote, CheckCircle, Copy, ExternalLink, Mail, Lock, XCircle, Pencil } from 'lucide-react';
 import apiClient from './apiClient.js';
 
 const FIBONACCI_CARDS = [0, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, '?', '☕'];
@@ -16,9 +16,37 @@ const ScrumPokerApp = () => {
   const [participants, setParticipants] = useState([]);
   const [isConnected, setIsConnected] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [pendingInvite, setPendingInvite] = useState(null); // For invite link handling
+  const [showPasswordModal, setShowPasswordModal] = useState(false); // For password prompt
+  const [passwordModalCode, setPasswordModalCode] = useState(''); // Invite code needing password
 
   // Use ref to avoid stale closure in socket event handlers
   const currentRoomRef = useRef(null);
+
+  // Parse invite URL on app load
+  useEffect(() => {
+    const path = window.location.pathname;
+    const inviteMatch = path.match(/^\/invite\/([A-Za-z0-9]+)$/);
+
+    if (inviteMatch) {
+      const inviteCode = inviteMatch[1].toUpperCase();
+      let password = null;
+
+      // Try to extract password from URL hash
+      if (window.location.hash) {
+        try {
+          const encodedPassword = window.location.hash.slice(1); // Remove #
+          password = atob(encodedPassword); // Decode base64
+          console.log('[INVITE] Password extracted from URL hash');
+        } catch (e) {
+          console.error('[INVITE] Failed to decode password from hash:', e);
+        }
+      }
+
+      console.log('[INVITE] Detected invite link:', { inviteCode, hasPassword: !!password });
+      setPendingInvite({ code: inviteCode, password });
+    }
+  }, []);
 
   // Initialize user and socket connection on app load
   useEffect(() => {
@@ -37,7 +65,14 @@ const ScrumPokerApp = () => {
         setUser(userData);
         apiClient.initializeSocket(userData.name, userData.anonymousId);
 
-        if (savedRoom) {
+        // Check for pending invite first (takes priority over saved room)
+        const path = window.location.pathname;
+        const inviteMatch = path.match(/^\/invite\/([A-Za-z0-9]+)$/);
+
+        if (inviteMatch) {
+          // Let the pending invite flow handle this
+          setCurrentView('dashboard'); // Will be redirected by invite handling
+        } else if (savedRoom) {
           // Attempt to rejoin room
           joinRoom(savedRoom).catch(() => {
             localStorage.removeItem('scrumPokerCurrentRoom');
@@ -54,6 +89,33 @@ const ScrumPokerApp = () => {
     }
   }, []);
 
+  // Process pending invite when user is ready
+  useEffect(() => {
+    if (pendingInvite && user && currentView === 'dashboard') {
+      console.log('[INVITE] Processing pending invite:', pendingInvite);
+
+      const processPendingInvite = async () => {
+        try {
+          if (pendingInvite.password) {
+            // We have the password, join directly
+            await joinRoomByInvite(pendingInvite.code, pendingInvite.password);
+          } else {
+            // No password in URL, the joinRoomByInvite will show password modal
+            await joinRoomByInvite(pendingInvite.code, null);
+          }
+        } catch (error) {
+          console.error('[INVITE] Failed to process invite:', error);
+        } finally {
+          // Clear pending invite and clean up URL
+          setPendingInvite(null);
+          window.history.replaceState({}, '', '/');
+        }
+      };
+
+      processPendingInvite();
+    }
+  }, [pendingInvite, user, currentView]);
+
   // Socket event listeners
   useEffect(() => {
     const cleanupFunctions = [
@@ -67,6 +129,7 @@ const ScrumPokerApp = () => {
       apiClient.on('votes_reset', handleVotesReset),
       apiClient.on('room_updated', handleRoomUpdated),
       apiClient.on('session_ended', handleSessionEnded),
+      apiClient.on('session_updated', handleSessionUpdated),
       apiClient.on('room_closed', handleRoomClosed)
     ];
 
@@ -146,6 +209,17 @@ const ScrumPokerApp = () => {
     setVotes({});
     setVotingRevealed(false);
     setSelectedCard(null);
+  };
+
+  const handleSessionUpdated = (data) => {
+    console.log('[HANDLE_SESSION_UPDATED] Session updated:', data);
+    setCurrentSession(data.session);
+    // Reset votes if the topic was changed with vote reset
+    if (data.resetVotes) {
+      setVotes({});
+      setVotingRevealed(false);
+      setSelectedCard(null);
+    }
   };
 
   const handleRoomClosed = (data) => {
@@ -240,11 +314,19 @@ const ScrumPokerApp = () => {
     }
   };
 
-const joinRoom = async (roomId) => {
+const joinRoom = async (roomId, password = null) => {
   setLoading(true);
   try {
+    // If joining from dashboard (room we're already in), no password needed
+    // If joining for first time, password required
+    if (!password) {
+      // Check if we're already a participant (rejoining)
+      // For now, assume if no password given, we're rejoining
+      password = prompt('Enter room password (or leave blank if rejoining):') || '';
+    }
+
     // Actually join the room (registers as participant in backend)
-    const joinResponse = await apiClient.joinRoom(roomId);
+    const joinResponse = await apiClient.joinRoom(roomId, password);
     const room = joinResponse.room;
 
     console.log('[JOIN_ROOM] Room data received:', {
@@ -273,20 +355,60 @@ const joinRoom = async (roomId) => {
     // Backend will send 'session_started' event if there's an active session
     apiClient.joinSocketRoom(roomId);
   } catch (error) {
-    alert('Failed to join room: ' + error.message);
+    if (error.message && error.message.includes('Incorrect password')) {
+      alert('Incorrect password. Please try again.');
+      // Retry with new password
+      const newPassword = prompt('Incorrect password. Please enter the correct room password:');
+      if (newPassword) {
+        return joinRoom(roomId, newPassword);
+      }
+    } else {
+      alert('Failed to join room: ' + error.message);
+    }
     localStorage.removeItem('scrumPokerCurrentRoom');
   } finally {
     setLoading(false);
   }
 };
 
-  const joinRoomByInvite = async (inviteCode) => {
+  const joinRoomByInvite = async (inviteCode, password = null) => {
     setLoading(true);
     try {
-      const room = await apiClient.joinRoomByCode(inviteCode);
-      await joinRoom(room._id);
+      // If no password provided, try to get it from URL hash
+      if (!password && window.location.hash) {
+        try {
+          const encodedPassword = window.location.hash.slice(1); // Remove #
+          password = atob(encodedPassword); // Decode base64
+          console.log('[JOIN_BY_INVITE] Password extracted from URL hash');
+        } catch (e) {
+          console.error('[JOIN_BY_INVITE] Failed to decode password from hash:', e);
+        }
+      }
+
+      // If still no password, show password modal
+      if (!password) {
+        setLoading(false);
+        setPasswordModalCode(inviteCode);
+        setShowPasswordModal(true);
+        return; // Modal will call joinRoomByInvite again with password
+      }
+
+      const room = await apiClient.joinRoomByCode(inviteCode, password);
+      await joinRoom(room._id, password);
+
+      // Clean up URL if we came from an invite link
+      if (window.location.pathname.includes('/invite/')) {
+        window.history.replaceState({}, '', '/');
+      }
     } catch (error) {
-      alert('Failed to join room: ' + error.message);
+      if (error.message && error.message.includes('Incorrect password')) {
+        alert('Incorrect password. Please try again.');
+        // Show password modal again
+        setPasswordModalCode(inviteCode);
+        setShowPasswordModal(true);
+      } else {
+        alert('Failed to join room: ' + error.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -378,14 +500,28 @@ const joinRoom = async (roomId) => {
 
   const resetVoting = () => {
     if (!currentSession) return;
-    
+
     // Emit reset event to all participants
     apiClient.emitResetVotes(currentSession._id);
-    
+
     // Reset local state
     setVotes({});
     setVotingRevealed(false);
     setSelectedCard(null);
+  };
+
+  const updateSessionTopic = async (newTopic, newTopicLink = '', resetVotes = true) => {
+    if (!currentSession) return;
+
+    setLoading(true);
+    try {
+      await apiClient.updateSessionTopic(currentSession._id, newTopic, newTopicLink, resetVotes);
+      // The session_updated event will handle state updates for all participants
+    } catch (error) {
+      alert('Failed to update topic: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   // Utility functions
@@ -543,6 +679,7 @@ const joinRoom = async (roomId) => {
     const [roomDescription, setRoomDescription] = useState('');
     const [roomPassword, setRoomPassword] = useState('');
     const [inviteCode, setInviteCode] = useState('');
+    const [joinPassword, setJoinPassword] = useState('');
     const [showJoinByCode, setShowJoinByCode] = useState(false);
 
     const handleCreateRoom = async () => {
@@ -555,10 +692,11 @@ const joinRoom = async (roomId) => {
     };
 
     const handleJoinByCode = async () => {
-      if (!inviteCode.trim()) return;
-      await joinRoomByInvite(inviteCode.toUpperCase());
+      if (!inviteCode.trim() || !joinPassword.trim()) return;
+      await joinRoomByInvite(inviteCode.toUpperCase(), joinPassword);
       setShowJoinByCode(false);
       setInviteCode('');
+      setJoinPassword('');
     };
 
     return (
@@ -743,17 +881,27 @@ const joinRoom = async (roomId) => {
                       maxLength={6}
                     />
                   </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Room Password</label>
+                    <input
+                      type="password"
+                      value={joinPassword}
+                      onChange={(e) => setJoinPassword(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                      placeholder="Enter room password"
+                    />
+                  </div>
                 </div>
                 <div className="flex space-x-3 mt-6">
                   <button
                     onClick={handleJoinByCode}
-                    disabled={loading || !inviteCode.trim()}
+                    disabled={loading || !inviteCode.trim() || !joinPassword.trim()}
                     className="flex-1 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-50"
                   >
                     {loading ? 'Joining...' : 'Join Room'}
                   </button>
                   <button
-                    onClick={() => setShowJoinByCode(false)}
+                    onClick={() => { setShowJoinByCode(false); setInviteCode(''); setJoinPassword(''); }}
                     className="flex-1 border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50"
                   >
                     Cancel
@@ -772,6 +920,27 @@ const joinRoom = async (roomId) => {
     const [topic, setTopic] = useState('');
     const [topicLink, setTopicLink] = useState('');
     const [showStartSession, setShowStartSession] = useState(false);
+    const [isEditingTopic, setIsEditingTopic] = useState(false);
+    const [editTopic, setEditTopic] = useState('');
+    const [editTopicLink, setEditTopicLink] = useState('');
+
+    const handleEditTopic = () => {
+      setEditTopic(currentSession?.topic || '');
+      setEditTopicLink(currentSession?.topicLink || '');
+      setIsEditingTopic(true);
+    };
+
+    const handleSaveEditedTopic = async () => {
+      if (!editTopic.trim()) return;
+      await updateSessionTopic(editTopic.trim(), editTopicLink.trim(), true);
+      setIsEditingTopic(false);
+    };
+
+    const handleCancelEdit = () => {
+      setIsEditingTopic(false);
+      setEditTopic('');
+      setEditTopicLink('');
+    };
 
     const handleStartSession = async () => {
       if (!topic.trim()) return;
@@ -864,23 +1033,78 @@ const joinRoom = async (roomId) => {
                 </div>
               ) : (
                 <div className="bg-white rounded-lg shadow-sm border p-6 mb-6">
-                  <h3 className="text-lg font-semibold mb-4">Current Topic</h3>
-                  <div className="space-y-3">
-                    <div>
-                      <h4 className="font-medium text-gray-900">{currentSession.topic}</h4>
-                      {currentSession.topicLink && (
-                        <a 
-                          href={currentSession.topicLink} 
-                          target="_blank" 
-                          rel="noopener noreferrer"
-                          className="text-indigo-600 hover:text-indigo-700 text-sm flex items-center mt-1"
-                        >
-                          <Link className="w-4 h-4 mr-1" />
-                          View Details
-                        </a>
-                      )}
-                    </div>
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-lg font-semibold">Current Topic</h3>
+                    {isHost() && !isEditingTopic && (
+                      <button
+                        onClick={handleEditTopic}
+                        className="flex items-center text-indigo-600 hover:text-indigo-700 text-sm"
+                        title="Edit topic"
+                      >
+                        <Pencil className="w-4 h-4 mr-1" />
+                        Edit
+                      </button>
+                    )}
                   </div>
+
+                  {isEditingTopic ? (
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Topic</label>
+                        <textarea
+                          value={editTopic}
+                          onChange={(e) => setEditTopic(e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 h-20"
+                          placeholder="What are you estimating?"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Link (Optional)</label>
+                        <input
+                          type="url"
+                          value={editTopicLink}
+                          onChange={(e) => setEditTopicLink(e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                          placeholder="https://jira.company.com/ticket/123"
+                        />
+                      </div>
+                      <p className="text-sm text-amber-600">
+                        Note: Saving will reset all votes for the new topic.
+                      </p>
+                      <div className="flex space-x-3">
+                        <button
+                          onClick={handleSaveEditedTopic}
+                          disabled={loading || !editTopic.trim()}
+                          className="flex-1 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+                        >
+                          {loading ? 'Saving...' : 'Save & Reset Votes'}
+                        </button>
+                        <button
+                          onClick={handleCancelEdit}
+                          className="flex-1 border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      <div>
+                        <h4 className="font-medium text-gray-900">{currentSession.topic}</h4>
+                        {currentSession.topicLink && (
+                          <a
+                            href={currentSession.topicLink}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-indigo-600 hover:text-indigo-700 text-sm flex items-center mt-1"
+                          >
+                            <Link className="w-4 h-4 mr-1" />
+                            View Details
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1263,6 +1487,72 @@ const joinRoom = async (roomId) => {
     );
   };
 
+  // Password Modal Component (for invite links without embedded password)
+  const PasswordModal = () => {
+    const [password, setPassword] = useState('');
+
+    const handleSubmit = async (e) => {
+      e.preventDefault();
+      if (password.trim()) {
+        setShowPasswordModal(false);
+        await joinRoomByInvite(passwordModalCode, password);
+        setPassword('');
+      }
+    };
+
+    const handleCancel = () => {
+      setShowPasswordModal(false);
+      setPasswordModalCode('');
+      setPassword('');
+      // Clean up URL if we came from an invite link
+      if (window.location.pathname.includes('/invite/')) {
+        window.history.replaceState({}, '', '/');
+      }
+    };
+
+    if (!showPasswordModal) return null;
+
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+        <div className="bg-white rounded-lg p-6 w-full max-w-md">
+          <div className="flex items-center mb-4">
+            <Lock className="w-6 h-6 text-indigo-600 mr-2" />
+            <h3 className="text-lg font-semibold">Enter Room Password</h3>
+          </div>
+          <p className="text-gray-600 text-sm mb-4">
+            This room requires a password to join. Enter the password provided by the room host.
+          </p>
+          <form onSubmit={handleSubmit}>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 mb-4"
+              placeholder="Room password"
+              autoFocus
+            />
+            <div className="flex space-x-3">
+              <button
+                type="submit"
+                disabled={!password.trim() || loading}
+                className="flex-1 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {loading ? 'Joining...' : 'Join Room'}
+              </button>
+              <button
+                type="button"
+                onClick={handleCancel}
+                className="flex-1 border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    );
+  };
+
   // Main App Render
   return (
     <div className="font-sans">
@@ -1270,6 +1560,7 @@ const joinRoom = async (roomId) => {
       {currentView === 'dashboard' && <DashboardView />}
       {currentView === 'room' && <RoomView />}
       {currentView === 'analytics' && <AnalyticsView />}
+      <PasswordModal />
     </div>
   );
 };

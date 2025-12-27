@@ -175,6 +175,17 @@ class ApiClient {
     });
   }
 
+  async updateSessionTopic(sessionId, topic, topicLink = '', resetVotes = true) {
+    return this.request(`/api/sessions/${sessionId}/update-topic`, {
+      method: 'POST',
+      body: {
+        topic,
+        topicLink,
+        resetVotes
+      },
+    });
+  }
+
   async closeRoom(roomId) {
     return this.request(`/api/rooms/${roomId}/close`, {
       method: 'POST',
@@ -301,6 +312,11 @@ class ApiClient {
     this.socket.on('session_ended', (data) => {
       console.log('Session ended:', data);
       this.emit('session_ended', data);
+    });
+
+    this.socket.on('session_updated', (data) => {
+      console.log('Session updated:', data);
+      this.emit('session_updated', data);
     });
 
     this.socket.on('room_closed', (data) => {
